@@ -17,16 +17,16 @@ function StatusBadge({ status }) {
 
 export default function NodeListPanel({ graph, onOpenResearch }) {
   const [seedsExpanded, setSeedsExpanded] = useState(false);
+  const [conjecturesExpanded, setConjecturesExpanded] = useState(true);
 
   const nodes = Object.values(graph);
   const theorems = nodes
     .filter(n => n.type === 'theorem')
-    .sort((a, b) => {
-      const aNum = parseInt(a.id.slice(1)) || 0;
-      const bNum = parseInt(b.id.slice(1)) || 0;
-      return aNum - bNum;
-    });
-  const seeds = nodes.filter(n => n.type !== 'theorem');
+    .sort((a, b) => (parseInt(a.id.slice(1)) || 0) - (parseInt(b.id.slice(1)) || 0));
+  const conjectures = nodes
+    .filter(n => n.type === 'conjecture')
+    .sort((a, b) => (parseInt(a.id.slice(1)) || 0) - (parseInt(b.id.slice(1)) || 0));
+  const seeds = nodes.filter(n => n.type !== 'theorem' && n.type !== 'conjecture');
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', fontSize: 11 }}>
@@ -35,7 +35,7 @@ export default function NodeListPanel({ graph, onOpenResearch }) {
           No theorems yet — run some steps.
         </div>
       ) : theorems.map(node => {
-        const status = computeStatus(node);
+        const status = computeStatus(node, graph);
         return (
           <div
             key={node.id}
@@ -65,6 +65,57 @@ export default function NodeListPanel({ graph, onOpenResearch }) {
           </div>
         );
       })}
+
+      {/* Conjectures collapsible */}
+      {conjectures.length > 0 && (
+        <>
+          <div
+            onClick={() => setConjecturesExpanded(e => !e)}
+            style={{
+              padding: '8px 10px',
+              cursor: 'pointer',
+              borderBottom: '1px solid #27272a',
+              display: 'flex', gap: 6, alignItems: 'center',
+              background: '#111113',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = '#18181b'}
+            onMouseLeave={e => e.currentTarget.style.background = '#111113'}
+          >
+            <span style={{ color: '#52525b', fontSize: 10 }}>{conjecturesExpanded ? '▼' : '▶'}</span>
+            <span style={{ color: '#a855f7' }}>Conjectures</span>
+            <span style={{ color: '#52525b' }}>({conjectures.length})</span>
+          </div>
+          {conjecturesExpanded && conjectures.map(node => {
+            const status = computeStatus(node, graph);
+            return (
+              <div
+                key={node.id}
+                onClick={() => onOpenResearch(node.id)}
+                style={{
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  borderBottom: '1px solid #27272a',
+                  display: 'flex', gap: 8, alignItems: 'center',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#1c1c1f'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <span style={{ color: '#7c3aed', flexShrink: 0, width: 34 }}>{node.id}</span>
+                <StatusBadge status={status} />
+                <span style={{ color: AGENT_COLOR[node.author] || '#71717a', flexShrink: 0 }}>
+                  {AGENT_NAME[node.author] || node.author}
+                </span>
+                <span style={{
+                  color: '#a1a1aa', overflow: 'hidden',
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+                }}>
+                  {deobfuscate(node.claim).slice(0, 100)}
+                </span>
+              </div>
+            );
+          })}
+        </>
+      )}
 
       {/* Seeds collapsible */}
       <div

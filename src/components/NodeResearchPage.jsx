@@ -22,8 +22,8 @@ function StatusBadge({ status, small }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-function SidebarRow({ node, isSelected, onSelect }) {
-  const status = computeStatus(node);
+function SidebarRow({ node, graph, isSelected, onSelect }) {
+  const status = computeStatus(node, graph);
   const isSeed = node.type !== 'theorem';
   return (
     <div
@@ -54,13 +54,17 @@ function SidebarRow({ node, isSelected, onSelect }) {
 
 function Sidebar({ graph, selectedId, onSelect, collapsed, onToggle }) {
   const [seedsOpen, setSeedsOpen] = useState(false);
+  const [conjecturesOpen, setConjecturesOpen] = useState(true);
   const selectedRef = useRef(null);
 
   const nodes = Object.values(graph);
   const theorems = nodes
     .filter(n => n.type === 'theorem')
     .sort((a, b) => (parseInt(a.id.slice(1)) || 0) - (parseInt(b.id.slice(1)) || 0));
-  const seeds = nodes.filter(n => n.type !== 'theorem');
+  const conjectures = nodes
+    .filter(n => n.type === 'conjecture')
+    .sort((a, b) => (parseInt(a.id.slice(1)) || 0) - (parseInt(b.id.slice(1)) || 0));
+  const seeds = nodes.filter(n => n.type !== 'theorem' && n.type !== 'conjecture');
 
   // Scroll selected node into view in sidebar
   useEffect(() => {
@@ -114,22 +118,41 @@ function Sidebar({ graph, selectedId, onSelect, collapsed, onToggle }) {
           )}
           {theorems.map(node => (
             <div key={node.id} ref={selectedId === node.id ? selectedRef : null}>
-              <SidebarRow node={node} isSelected={selectedId === node.id} onSelect={onSelect} />
+              <SidebarRow node={node} graph={graph} isSelected={selectedId === node.id} onSelect={onSelect} />
             </div>
           ))}
+
+          {/* Conjectures collapsible */}
+          {conjectures.length > 0 && (
+            <>
+              <div
+                onClick={() => setConjecturesOpen(o => !o)}
+                style={{
+                  padding: '6px 10px', cursor: 'pointer',
+                  display: 'flex', gap: 6, alignItems: 'center',
+                  background: '#111113', borderTop: '1px solid #27272a',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#18181b'}
+                onMouseLeave={e => e.currentTarget.style.background = '#111113'}
+              >
+                <span style={{ color: '#3f3f46', fontSize: 9 }}>{conjecturesOpen ? '▼' : '▶'}</span>
+                <span style={{ color: '#a855f7', fontSize: 10 }}>Conjectures ({conjectures.length})</span>
+              </div>
+              {conjecturesOpen && conjectures.map(node => (
+                <div key={node.id} ref={selectedId === node.id ? selectedRef : null}>
+                  <SidebarRow node={node} graph={graph} isSelected={selectedId === node.id} onSelect={onSelect} />
+                </div>
+              ))}
+            </>
+          )}
 
           {/* Seeds collapsible */}
           <div
             onClick={() => setSeedsOpen(o => !o)}
             style={{
-              padding: '6px 10px',
-              cursor: 'pointer',
-              display: 'flex',
-              gap: 6,
-              alignItems: 'center',
-              background: '#111113',
-              borderTop: '1px solid #27272a',
-              borderBottom: seedsOpen ? 'none' : 'none',
+              padding: '6px 10px', cursor: 'pointer',
+              display: 'flex', gap: 6, alignItems: 'center',
+              background: '#111113', borderTop: '1px solid #27272a',
             }}
             onMouseEnter={e => e.currentTarget.style.background = '#18181b'}
             onMouseLeave={e => e.currentTarget.style.background = '#111113'}
@@ -139,7 +162,7 @@ function Sidebar({ graph, selectedId, onSelect, collapsed, onToggle }) {
           </div>
           {seedsOpen && seeds.map(node => (
             <div key={node.id} ref={selectedId === node.id ? selectedRef : null}>
-              <SidebarRow node={node} isSelected={selectedId === node.id} onSelect={onSelect} />
+              <SidebarRow node={node} graph={graph} isSelected={selectedId === node.id} onSelect={onSelect} />
             </div>
           ))}
         </div>
@@ -236,7 +259,7 @@ function CitationsSection({ node, graph, onNavigate }) {
           >
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: cited ? 4 : 0 }}>
               <span style={{ color: '#52525b', fontSize: 11, flexShrink: 0 }}>[{cid}]</span>
-              {cited && <StatusBadge status={computeStatus(cited)} small />}
+              {cited && <StatusBadge status={computeStatus(cited, graph)} small />}
             </div>
             {cited ? (
               <div style={{ color: '#a1a1aa', fontSize: 11, fontStyle: 'italic', lineHeight: 1.6 }}>
@@ -297,21 +320,33 @@ function ProofStepsSection({ node, onNavigate }) {
   );
 }
 
+const VERDICT_COLOR = {
+  approve: '#4ade80',
+  conditional_approve: '#84cc16',
+  dispute: '#f87171',
+};
+const VERDICT_BORDER = {
+  approve: '#16a34a',
+  conditional_approve: '#4d7c0f',
+  dispute: '#dc2626',
+};
+
 function VerificationCard({ v }) {
-  const isApprove = v.verdict === 'approve';
+  const borderColor = VERDICT_BORDER[v.verdict] || '#52525b';
+  const textColor = VERDICT_COLOR[v.verdict] || '#a1a1aa';
   return (
     <div style={{
       marginBottom: 8,
       padding: '8px 12px',
       background: '#0d0d10',
       borderRadius: 4,
-      borderLeft: `3px solid ${isApprove ? '#16a34a' : '#dc2626'}`,
+      borderLeft: `3px solid ${borderColor}`,
     }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 5 }}>
         <span style={{ color: AGENT_COLOR[v.agentId] || '#d4d4d8', fontWeight: 700, fontSize: 12 }}>
           {AGENT_NAME[v.agentId] || v.agentId}
         </span>
-        <span style={{ color: isApprove ? '#4ade80' : '#f87171', fontSize: 11 }}>
+        <span style={{ color: textColor, fontSize: 11 }}>
           {v.verdict}
         </span>
       </div>
@@ -331,7 +366,7 @@ function VerificationCard({ v }) {
 
 function VerificationsSection({ node }) {
   if (node.type !== 'theorem') return null;
-  const approvals = (node.verifications || []).filter(v => v.verdict === 'approve');
+  const approvals = (node.verifications || []).filter(v => v.verdict === 'approve' || v.verdict === 'conditional_approve');
   const disputes = (node.verifications || []).filter(v => v.verdict === 'dispute');
 
   return (
@@ -377,8 +412,8 @@ function MainPanel({ node, graph, onNavigate }) {
     );
   }
 
-  const status = computeStatus(node);
-  const isSeed = node.type !== 'theorem';
+  const status = computeStatus(node, graph);
+  const isSeed = node.type !== 'theorem' && node.type !== 'conjecture';
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
