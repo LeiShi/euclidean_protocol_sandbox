@@ -33,11 +33,11 @@ export LLM_MODEL=             # optional model override
 ## Architecture
 
 **Backend** (`server/`) runs on port 3001 (Express, ES modules):
-- `state.js` — singleton in-memory state: `graph` (node dict), `agents[]` (with `accepted_set`, `rejected_set`, `published` as Sets), `log[]`, `turn`, `nodeCounter`, `config`, `running`, `abortFlag`, `turnHistory[]`, `snapshots[]`, `initialState`
+- `state.js` — singleton in-memory state: `graph` (node dict), `agents[]` (each with `accepted_set`, `rejected_set`, `published`, `reviewed_disputes` as Sets), `log[]`, `turn`, `nodeCounter`, `config`, `running`, `abortFlag`, `turnHistory[]`, `snapshots[]`, `initialState`
 - `seeds.js` — all 33 seed nodes (DEFINITIONS, POSTULATES, COMMON_NOTIONS) + AGENT_DEFS
 - `protocol.js` — `validatePublication()`, `validateVerification()`, `computeStatus()`, `computeStats()`
 - `simulation.js` — `doAgentTurn()`: Phase 0 (belief revision) → Phase 1 (verify) → Phase 2 (derive); uses try/finally to always record a `TurnRecord` with delta + LLM debug trace; captures full snapshots every 10 turns
-- `llm.js` — `callLLM()`, `callLLMWithTrace()` (returns raw + timing trace), `DEFAULT_MODELS`, prompt builders, `parseJSON()`
+- `llm.js` — `callLLM()`, `callLLMWithTrace()` (returns `{ raw, trace }` with provider, model, prompts, raw response, latency), `DEFAULT_MODELS`, `buildBeliefRevisionPrompt()`, other prompt builders, `parseJSON()`
 - `save.js` — `assembleSaveFile()`, `validateSaveFile()`, `restoreFromSaveFile()`
 - `vocab.js` — VOCAB map + `deobfuscate()` (server-side copy)
 - `index.js` — Express routes (JSON body limit: 50mb):
@@ -48,8 +48,10 @@ export LLM_MODEL=             # optional model override
   - `POST /api/replay/load` — validate save file and return it for client-side replay
 
 **Frontend** (`src/`) served by Vite on port 3000, proxies `/api` to port 3001:
-- `App.jsx` — main component; live simulation mode + replay mode state machine; Save Run / Load Run buttons; configurable rounds input
+- `App.jsx` — main component; live simulation + replay mode state machine; Graph/Nodes tab switcher; Save Run / Load Run / Research buttons; configurable rounds input
 - `components/ForceGraph.jsx` — D3 force-directed graph; rebuilds on node/link count change; separate effect for `selectedNode` and `highlightNodes` (no full rebuild)
+- `components/NodeListPanel.jsx` — compact node list tab (theorems + collapsed seeds), click to open Research page
+- `components/NodeResearchPage.jsx` — full-screen research overlay with collapsible sidebar + sectioned main panel (Statement, Citations, Proof Steps, Approvals, Disputes)
 - `components/ReplayControls.jsx` — replay banner, scrubber, First/Prev/Next/Last, Play/Pause, speed (0.5×–5×), agent/action filters
 - `components/ReplayTurnDetail.jsx` — per-turn summary, delta display, collapsible LLM debug (system prompt, user prompt, raw response, parsed JSON)
 - `utils/replay.js` — `reconstructStateAtTurn()`, `applyDelta()`, `getChangedNodeIds()`, `buildSaveFilename()`
@@ -67,8 +69,11 @@ The core of the experiment. See `SPEC.md` for the full spec. Key rules:
 ## Agent Turn Structure
 
 Each `doAgentTurn()` call:
-1. Snapshots agent state (accepted/rejected/published sets) and graph verification counts before execution
-2. Runs Phase 0 → 1 → 2 (only one phase executes per turn, using early `return`)
+1. Snapshots agent state (accepted/rejected/published/reviewed_disputes sets) and graph verification counts before execution
+2. Runs Phase 0 → 1 → 2 (only one phase executes per turn, using early `return`):
+   - **Phase 0 — Belief Revision**: if own publications have unreviewed disputes (tracked in `reviewed_disputes` as `"nodeId:disputerAgentId"` pairs), calls `buildBeliefRevisionPrompt()`. LLM returns `{ decision: "retract" | "defend" }`. On retract: BFS-cascade retracts all accepted nodes that transitively cite the retracted node.
+   - **Phase 1 — Verify**: if unverified+verifiable theorems exist and agent is skeptical or `Math.random() < 0.5`, pick one and verify.
+   - **Phase 2 — Derive**: call `buildDerivationPrompt()` to produce a new theorem.
 3. In `finally`: computes delta (graph additions/modifications, agent set changes), builds `TurnRecord`, pushes to `state.turnHistory`, increments `state.turn`, captures a full snapshot every 10 turns
 
 ## Save / Load / Replay

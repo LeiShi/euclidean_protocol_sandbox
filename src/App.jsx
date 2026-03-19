@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ForceGraph from './components/ForceGraph.jsx';
 import ReplayControls from './components/ReplayControls.jsx';
 import ReplayTurnDetail from './components/ReplayTurnDetail.jsx';
+import NodeListPanel from './components/NodeListPanel.jsx';
+import NodeResearchPage from './components/NodeResearchPage.jsx';
 import { deobfuscate, VOCAB } from './vocab.js';
 import { AGENT_DEFS, computeStatus, STATUS_BG, STATUS_TEXT, LOG_COLORS } from './constants.js';
 import { reconstructStateAtTurn, getChangedNodeIds, buildSaveFilename } from './utils/replay.js';
@@ -362,6 +364,18 @@ export default function App() {
   const [rounds, setRounds] = useState(3);
   const runningRef = useRef(false);
 
+  // Main panel tab
+  const [mainTab, setMainTab] = useState('graph'); // 'graph' | 'nodelist'
+
+  // Research page
+  const [showResearch, setShowResearch] = useState(false);
+  const [researchFocusId, setResearchFocusId] = useState(null);
+
+  const handleOpenResearch = useCallback((nodeId = null) => {
+    setResearchFocusId(nodeId);
+    setShowResearch(true);
+  }, []);
+
   // Save/Load/Replay state
   const [loadDialog, setLoadDialog] = useState(null); // { saveFile }
   const [replayFile, setReplayFile] = useState(null);  // SaveFile object
@@ -696,6 +710,9 @@ export default function App() {
           <button onClick={handleLoadClick} style={S.btn(true, '#18181b')} title="Load a saved run">
             📂 Load Run
           </button>
+          <button onClick={() => handleOpenResearch(null)} style={S.btn(true, '#18181b')} title="Open node research view">
+            🔬 Research
+          </button>
 
           <button
             onClick={() => setShowVocab(v => !v)}
@@ -725,27 +742,53 @@ export default function App() {
 
       {/* MAIN CONTENT */}
       <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
-        {/* LEFT: GRAPH */}
+        {/* LEFT: GRAPH / NODE LIST */}
         <div style={{ flex: 2, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #27272a', flexShrink: 0 }}>
+            {[
+              { key: 'graph', label: 'Graph' },
+              { key: 'nodelist', label: `Nodes (${Object.values(displayGraph).filter(n => n.type === 'theorem').length})` },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setMainTab(tab.key)}
+                style={{
+                  background: 'none', border: 'none',
+                  borderBottom: mainTab === tab.key ? '2px solid #3b82f6' : '2px solid transparent',
+                  color: mainTab === tab.key ? '#f4f4f5' : '#71717a',
+                  cursor: 'pointer', padding: '6px 16px',
+                  fontSize: 12, fontFamily: 'inherit', marginBottom: -1,
+                }}
+              >{tab.label}</button>
+            ))}
+          </div>
+
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            <ForceGraph
-              graph={displayGraph}
-              selectedNode={selectedNode}
-              onSelectNode={setSelectedNode}
-              highlightNodes={highlightNodes}
-            />
-            <GraphLegend />
-            {/* NodeDetail overlay */}
-            {selectedNodeData && (
-              <div style={{
-                position: 'absolute', bottom: 0, left: 0, right: 0,
-                maxHeight: '45%', overflowY: 'auto',
-                background: 'rgba(24,24,27,0.97)',
-                borderTop: '1px solid #3f3f46',
-                borderRadius: '0 0 8px 8px',
-              }}>
-                <NodeDetail node={selectedNodeData} graph={displayGraph} onClose={() => setSelectedNode(null)} />
-              </div>
+            {mainTab === 'graph' ? (
+              <>
+                <ForceGraph
+                  graph={displayGraph}
+                  selectedNode={selectedNode}
+                  onSelectNode={setSelectedNode}
+                  highlightNodes={highlightNodes}
+                />
+                <GraphLegend />
+                {/* NodeDetail overlay */}
+                {selectedNodeData && (
+                  <div style={{
+                    position: 'absolute', bottom: 0, left: 0, right: 0,
+                    maxHeight: '45%', overflowY: 'auto',
+                    background: 'rgba(24,24,27,0.97)',
+                    borderTop: '1px solid #3f3f46',
+                    borderRadius: '0 0 8px 8px',
+                  }}>
+                    <NodeDetail node={selectedNodeData} graph={displayGraph} onClose={() => setSelectedNode(null)} />
+                  </div>
+                )}
+              </>
+            ) : (
+              <NodeListPanel graph={displayGraph} onOpenResearch={handleOpenResearch} />
             )}
           </div>
         </div>
@@ -769,16 +812,16 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Research page overlay */}
+      {showResearch && (
+        <NodeResearchPage
+          graph={displayGraph}
+          focusId={researchFocusId}
+          onClose={() => setShowResearch(false)}
+        />
+      )}
     </div>
   );
 }
 
-function Dot({ color, opacity = 1 }) {
-  return (
-    <span style={{
-      display: 'inline-block', width: 8, height: 8,
-      borderRadius: '50%', background: color, marginRight: 3, opacity,
-      verticalAlign: 'middle',
-    }} />
-  );
-}
