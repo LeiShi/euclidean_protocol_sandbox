@@ -1,7 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ForceGraph from './components/ForceGraph.jsx';
+import ReplayControls from './components/ReplayControls.jsx';
+import ReplayTurnDetail from './components/ReplayTurnDetail.jsx';
 import { deobfuscate, VOCAB } from './vocab.js';
 import { AGENT_DEFS, computeStatus, STATUS_BG, STATUS_TEXT, LOG_COLORS } from './constants.js';
+import { reconstructStateAtTurn, getChangedNodeIds, buildSaveFilename } from './utils/replay.js';
 
 const S = {
   app: { fontFamily: "'IBM Plex Mono', 'SF Mono', monospace", background: '#0a0b0e', color: '#d4d4d8', height: '100vh', overflow: 'hidden', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 },
@@ -199,6 +202,36 @@ function VocabPanel() {
   );
 }
 
+/** Dialog shown after loading a file — choose Continue or Replay */
+function LoadDialog({ saveFile, onContinue, onReplay, onCancel }) {
+  const s = saveFile.summary;
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+    }}>
+      <div style={{ ...S.panel, width: 380, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ color: '#f4f4f5', fontWeight: 700, fontSize: 14 }}>
+          Load Save File
+        </div>
+        <div style={{ fontSize: 12, color: '#a1a1aa' }}>
+          <div>{buildSaveFilename(saveFile)}</div>
+          <div style={{ marginTop: 4 }}>
+            {s.total_turns} turns · {s.total_theorems} theorems
+            ({s.accepted_theorems} accepted, {s.disputed_theorems} disputed)
+          </div>
+          <div>Agents: {s.agents?.map(a => `${a.name}: ${a.theorems_published} published`).join(' · ')}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={S.btn(true, '#27272a')}>Cancel</button>
+          <button onClick={onReplay} style={S.btn(true, '#78350f')}>▶ Replay Mode</button>
+          <button onClick={onContinue} style={S.btn(true, '#14532d')}>▶ Continue Simulation</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [serverState, setServerState] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -208,7 +241,14 @@ export default function App() {
   const [provider, setProvider] = useState('gemini');
   const [model, setModel] = useState(PROVIDER_MODELS.gemini[0]);
   const [apiKey, setApiKey] = useState('');
+  const [rounds, setRounds] = useState(3);
   const runningRef = useRef(false);
+
+  // Save/Load/Replay state
+  const [loadDialog, setLoadDialog] = useState(null); // { saveFile }
+  const [replayFile, setReplayFile] = useState(null);  // SaveFile object
+  const [replayTurn, setReplayTurn] = useState(0);
+  const fileInputRef = useRef(null);
 
   // Fetch initial state
   useEffect(() => {
@@ -268,7 +308,7 @@ export default function App() {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line
+        buffer = lines.pop();
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -276,7 +316,7 @@ export default function App() {
               setServerState(data);
               if (data.done) break;
             } catch {
-              // ignore parse errors
+              // ignore
             }
           }
         }
@@ -302,6 +342,91 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  // ── Save / Load / Replay ────────────────────────────────────────────────
+
+  const handleSave = useCallback(async () => {
+    setError(null);
+    try {
+      const resp = await fetch('/api/save', { method: 'POST' });
+      const saveFile = await resp.json();
+      if (!resp.ok) throw new Error(saveFile.error || 'Save failed');
+      const filename = buildSaveFilename(saveFile);
+      const blob = new Blob([JSON.stringify(saveFile, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(`Save failed: ${e.message}`);
+    }
+  }, []);
+
+  const handleLoadClick = () => fileInputRef.current?.click();
+
+  const handleFileSelected = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const saveFile = JSON.parse(ev.target.result);
+        setLoadDialog({ saveFile });
+      } catch {
+        setError('Failed to parse save file — invalid JSON');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // reset so same file can be re-selected
+  }, []);
+
+  const handleContinueSimulation = useCallback(async () => {
+    const { saveFile } = loadDialog;
+    setLoadDialog(null);
+    setError(null);
+    try {
+      const resp = await fetch('/api/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(saveFile),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Load failed');
+      setServerState(data);
+      setReplayFile(null);
+    } catch (e) {
+      setError(`Load failed: ${e.message}`);
+    }
+  }, [loadDialog]);
+
+  const handleEnterReplay = useCallback(() => {
+    const { saveFile } = loadDialog;
+    setLoadDialog(null);
+    setReplayFile(saveFile);
+    setReplayTurn(saveFile.summary.total_turns);
+    setSelectedNode(null);
+  }, [loadDialog]);
+
+  const handleExitReplay = useCallback(() => {
+    setReplayFile(null);
+    setReplayTurn(0);
+    setSelectedNode(null);
+  }, []);
+
+  // Compute replay state (reconstructed graph + agents at replayTurn)
+  const replayState = useMemo(() => {
+    if (!replayFile) return null;
+    return reconstructStateAtTurn(replayFile, replayTurn);
+  }, [replayFile, replayTurn]);
+
+  // Nodes that changed in the current replay turn (for highlighting)
+  const highlightNodes = useMemo(() => {
+    if (!replayFile || replayTurn === 0) return null;
+    const record = replayFile.turns[replayTurn - 1];
+    return getChangedNodeIds(record);
+  }, [replayFile, replayTurn]);
+
   if (!serverState) {
     return (
       <div style={{ ...S.app, alignItems: 'center', justifyContent: 'center' }}>
@@ -317,65 +442,100 @@ export default function App() {
     );
   }
 
-  const { graph, agents, log, turn, stats } = serverState;
+  // Determine which state/agents/graph to display
+  const displayGraph = replayFile ? replayState.graph : serverState.graph;
+  const displayAgents = replayFile ? replayState.agents : serverState.agents;
+
+  const { log, turn, stats } = serverState;
   const activeAgentIdx = turn % 3;
   const activeAgentId = ['A1', 'A2', 'A3'][activeAgentIdx];
   const activeAgentName = AGENT_NAME[activeAgentId];
-  const selectedNodeData = selectedNode ? graph[selectedNode] : null;
-  const canStep = !loading && !!apiKey;
+  const selectedNodeData = selectedNode ? displayGraph[selectedNode] : null;
+  const canStep = !loading && !!apiKey && !replayFile;
 
   return (
     <div style={S.app}>
-      {/* HEADER */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #27272a', paddingBottom: 10 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 18, color: '#f4f4f5', letterSpacing: 1 }}>
-            EUCLID PROTOCOL SANDBOX
-          </h1>
-          <span style={{ fontSize: 11, color: '#71717a' }}>
-            Axiomatic reasoning through structured protocol
-          </span>
+      {/* Hidden file input for load */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
+
+      {/* Load dialog */}
+      {loadDialog && (
+        <LoadDialog
+          saveFile={loadDialog.saveFile}
+          onContinue={handleContinueSimulation}
+          onReplay={handleEnterReplay}
+          onCancel={() => setLoadDialog(null)}
+        />
+      )}
+
+      {/* HEADER (hidden in replay mode — replaced by replay banner) */}
+      {!replayFile && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #27272a', paddingBottom: 10 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 18, color: '#f4f4f5', letterSpacing: 1 }}>
+              EUCLID PROTOCOL SANDBOX
+            </h1>
+            <span style={{ fontSize: 11, color: '#71717a' }}>
+              Axiomatic reasoning through structured protocol
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select
+              value={provider}
+              onChange={e => {
+                const newProvider = e.target.value;
+                const newModel = PROVIDER_MODELS[newProvider][0];
+                setProvider(newProvider);
+                setModel(newModel);
+                handleConfigChange(newProvider, newModel, apiKey);
+              }}
+              style={S.input}
+            >
+              <option value="gemini">Gemini</option>
+              <option value="claude">Claude</option>
+              <option value="openai">OpenAI</option>
+            </select>
+            <select
+              value={model}
+              onChange={e => {
+                setModel(e.target.value);
+                handleConfigChange(provider, e.target.value, apiKey);
+              }}
+              style={S.input}
+            >
+              {(PROVIDER_MODELS[provider] || []).map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+            <input
+              type="password"
+              placeholder="API Key"
+              value={apiKey}
+              onChange={e => {
+                setApiKey(e.target.value);
+                handleConfigChange(provider, model, e.target.value);
+              }}
+              style={{ ...S.input, width: 220 }}
+            />
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <select
-            value={provider}
-            onChange={e => {
-              const newProvider = e.target.value;
-              const newModel = PROVIDER_MODELS[newProvider][0];
-              setProvider(newProvider);
-              setModel(newModel);
-              handleConfigChange(newProvider, newModel, apiKey);
-            }}
-            style={S.input}
-          >
-            <option value="gemini">Gemini</option>
-            <option value="claude">Claude</option>
-            <option value="openai">OpenAI</option>
-          </select>
-          <select
-            value={model}
-            onChange={e => {
-              setModel(e.target.value);
-              handleConfigChange(provider, e.target.value, apiKey);
-            }}
-            style={S.input}
-          >
-            {(PROVIDER_MODELS[provider] || []).map(m => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-          <input
-            type="password"
-            placeholder="API Key"
-            value={apiKey}
-            onChange={e => {
-              setApiKey(e.target.value);
-              handleConfigChange(provider, model, e.target.value);
-            }}
-            style={{ ...S.input, width: 220 }}
-          />
-        </div>
-      </div>
+      )}
+
+      {/* REPLAY BANNER + CONTROLS */}
+      {replayFile && (
+        <ReplayControls
+          saveFile={replayFile}
+          replayTurn={replayTurn}
+          onSeek={setReplayTurn}
+          onExit={handleExitReplay}
+        />
+      )}
 
       {error && (
         <div style={{ background: '#7f1d1d', color: '#fca5a5', padding: '6px 12px', borderRadius: 4, fontSize: 12 }}>
@@ -383,54 +543,71 @@ export default function App() {
         </div>
       )}
 
-      {/* CONTROLS + STATS */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button
-          onClick={handleStep}
-          disabled={!canStep}
-          style={S.btn(canStep, '#3b82f6')}
-        >
-          {loading ? 'Running...' : `Step (${activeAgentName}'s turn)`}
-        </button>
-        <button
-          onClick={() => handleRun(9)}
-          disabled={!canStep}
-          style={{ ...S.btn(canStep, '#1e3a5f'), color: canStep ? '#93c5fd' : '#71717a', border: `1px solid ${canStep ? '#3b82f6' : '#3f3f46'}` }}
-        >
-          Run 3 rounds (9 steps)
-        </button>
-        {loading && (
-          <button onClick={handleStop} style={S.btn(true, '#7f1d1d')}>
-            Stop
+      {/* CONTROLS + STATS (live mode only) */}
+      {!replayFile && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={handleStep} disabled={!canStep} style={S.btn(canStep, '#3b82f6')}>
+            {loading ? 'Running...' : `Step (${activeAgentName}'s turn)`}
           </button>
-        )}
-        <button
-          onClick={() => setShowVocab(v => !v)}
-          style={{ ...S.btn(true, '#18181b'), color: '#a1a1aa', border: '1px solid #3f3f46', marginLeft: 'auto' }}
-        >
-          {showVocab ? 'Hide' : 'Show'} Vocabulary
-        </button>
-        <div style={{ display: 'flex', gap: 14, fontSize: 11, color: '#a1a1aa' }}>
-          <span>Turn: <b style={{ color: '#f4f4f5' }}>{turn}</b></span>
-          <span>Seeds: <span style={{ color: '#71717a' }}>{stats.definitions}D+{stats.postulates}P</span></span>
-          <span>Theorems: <b style={{ color: '#f4f4f5' }}>{stats.theorems}</b></span>
-          <span style={{ color: '#22c55e' }}>✓ {stats.accepted}</span>
-          <span style={{ color: '#f59e0b' }}>⏳ {stats.pending}</span>
-          <span style={{ color: '#ef4444' }}>✗ {stats.disputed}</span>
+          <input
+            type="number"
+            min={1}
+            max={9999}
+            value={rounds}
+            onChange={e => setRounds(Math.max(1, parseInt(e.target.value) || 1))}
+            disabled={!canStep}
+            style={{ ...S.input, width: 52, textAlign: 'center', opacity: canStep ? 1 : 0.4 }}
+            title="Number of rounds"
+          />
+          <button
+            onClick={() => handleRun(rounds * 3)}
+            disabled={!canStep}
+            style={{ ...S.btn(canStep, '#1e3a5f'), color: canStep ? '#93c5fd' : '#71717a', border: `1px solid ${canStep ? '#3b82f6' : '#3f3f46'}` }}
+          >
+            Run {rounds} round{rounds !== 1 ? 's' : ''} ({rounds * 3} steps)
+          </button>
+          {loading && (
+            <button onClick={handleStop} style={S.btn(true, '#7f1d1d')}>Stop</button>
+          )}
+
+          {/* Save / Load */}
+          <div style={{ width: 1, background: '#3f3f46', height: 24 }} />
+          <button onClick={handleSave} style={S.btn(true, '#18181b')} title="Save run to JSON file">
+            💾 Save Run
+          </button>
+          <button onClick={handleLoadClick} style={S.btn(true, '#18181b')} title="Load a saved run">
+            📂 Load Run
+          </button>
+
+          <button
+            onClick={() => setShowVocab(v => !v)}
+            style={{ ...S.btn(true, '#18181b'), color: '#a1a1aa', border: '1px solid #3f3f46', marginLeft: 'auto' }}
+          >
+            {showVocab ? 'Hide' : 'Show'} Vocabulary
+          </button>
+          <div style={{ display: 'flex', gap: 14, fontSize: 11, color: '#a1a1aa' }}>
+            <span>Turn: <b style={{ color: '#f4f4f5' }}>{turn}</b></span>
+            <span>Seeds: <span style={{ color: '#71717a' }}>{stats.definitions}D+{stats.postulates}P</span></span>
+            <span>Theorems: <b style={{ color: '#f4f4f5' }}>{stats.theorems}</b></span>
+            <span style={{ color: '#22c55e' }}>✓ {stats.accepted}</span>
+            <span style={{ color: '#f59e0b' }}>⏳ {stats.pending}</span>
+            <span style={{ color: '#ef4444' }}>✗ {stats.disputed}</span>
+          </div>
         </div>
-      </div>
+      )}
 
       {showVocab && <VocabPanel />}
 
       {/* MAIN CONTENT */}
       <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
-        {/* LEFT: GRAPH (NodeDetail overlays bottom of graph) */}
+        {/* LEFT: GRAPH */}
         <div style={{ flex: 2, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <ForceGraph
-              graph={graph}
+              graph={displayGraph}
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
+              highlightNodes={highlightNodes}
             />
             {/* Legend */}
             <div style={{
@@ -449,7 +626,7 @@ export default function App() {
               <span style={{ color: '#f59e0b' }}>Pending</span>
               <span style={{ color: '#ef4444' }}>Disputed</span>
             </div>
-            {/* NodeDetail — absolute overlay anchored to bottom of graph */}
+            {/* NodeDetail overlay */}
             {selectedNodeData && (
               <div style={{
                 position: 'absolute', bottom: 0, left: 0, right: 0,
@@ -458,26 +635,29 @@ export default function App() {
                 borderTop: '1px solid #3f3f46',
                 borderRadius: '0 0 8px 8px',
               }}>
-                <NodeDetail
-                  node={selectedNodeData}
-                  onClose={() => setSelectedNode(null)}
-                />
+                <NodeDetail node={selectedNodeData} onClose={() => setSelectedNode(null)} />
               </div>
             )}
           </div>
         </div>
 
-        {/* RIGHT: AGENTS + LOG */}
+        {/* RIGHT: AGENTS + LOG / REPLAY DETAIL */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 240, maxWidth: 320, minHeight: 0 }}>
-          {agents.map((agent) => (
+          {displayAgents.map((agent) => (
             <AgentPanel
               key={agent.id}
               agent={agent}
-              isActive={agent.id === activeAgentId}
+              isActive={!replayFile && agent.id === activeAgentId}
               isRunning={loading}
             />
           ))}
-          <EventLog log={log} />
+          {replayFile ? (
+            <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+              <ReplayTurnDetail saveFile={replayFile} replayTurn={replayTurn} />
+            </div>
+          ) : (
+            <EventLog log={log} />
+          )}
         </div>
       </div>
     </div>

@@ -2,12 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import { state, serializeState } from './state.js';
 import { doAgentTurn } from './simulation.js';
+import { assembleSaveFile, validateSaveFile, restoreFromSaveFile } from './save.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // GET /api/state — full graph + agent states + stats
 app.get('/api/state', (_req, res) => {
@@ -122,6 +123,41 @@ app.get('/api/node/:id', (req, res) => {
   const node = state.graph[req.params.id];
   if (!node) return res.status(404).json({ error: 'Node not found' });
   res.json(node);
+});
+
+// POST /api/save — assemble and return save file
+app.post('/api/save', (_req, res) => {
+  try {
+    const saveFile = assembleSaveFile();
+    res.json(saveFile);
+  } catch (e) {
+    console.error('[/api/save] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/load — restore full state from save file, then continue simulation
+app.post('/api/load', (req, res) => {
+  if (state.running) {
+    return res.status(409).json({ error: 'Simulation is running — stop it before loading' });
+  }
+  const data = req.body;
+  const { valid, errors } = validateSaveFile(data);
+  if (!valid) {
+    return res.status(400).json({ error: errors.join('; ') });
+  }
+  restoreFromSaveFile(data);
+  res.json(serializeState());
+});
+
+// POST /api/replay/load — validate a save file for client-side replay (returns it as-is)
+app.post('/api/replay/load', (req, res) => {
+  const data = req.body;
+  const { valid, errors } = validateSaveFile(data);
+  if (!valid) {
+    return res.status(400).json({ error: errors.join('; ') });
+  }
+  res.json(data);
 });
 
 app.listen(PORT, () => {

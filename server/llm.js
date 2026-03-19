@@ -1,6 +1,6 @@
 import { computeStatus } from './protocol.js';
 
-const DEFAULT_MODELS = {
+export const DEFAULT_MODELS = {
   gemini: 'gemini-3-flash-preview',
   claude: 'claude-sonnet-4-5',
   openai: 'gpt-4o-mini',
@@ -83,6 +83,23 @@ export async function callLLM(config, systemPrompt, userPrompt, retries = 1) {
     }
     throw e;
   }
+}
+
+export async function callLLMWithTrace(config, systemPrompt, userPrompt) {
+  const resolvedModel = config.model || DEFAULT_MODELS[config.provider];
+  const start = Date.now();
+  const raw = await callLLM(config, systemPrompt, userPrompt);
+  return {
+    raw,
+    trace: {
+      llm_provider: config.provider,
+      llm_model: resolvedModel,
+      system_prompt: systemPrompt,
+      user_prompt: userPrompt,
+      raw_response: raw,
+      latency_ms: Date.now() - start,
+    },
+  };
 }
 
 export function parseJSON(text) {

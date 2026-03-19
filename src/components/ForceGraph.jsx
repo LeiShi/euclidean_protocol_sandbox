@@ -24,7 +24,7 @@ function statusColor(d) {
   return '#f59e0b';
 }
 
-export default function ForceGraph({ graph, selectedNode, onSelectNode }) {
+export default function ForceGraph({ graph, selectedNode, onSelectNode, highlightNodes }) {
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const nodeSelRef = useRef(null);
@@ -118,12 +118,26 @@ export default function ForceGraph({ graph, selectedNode, onSelectNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes.length, links.length]);
 
-  // Update stroke width only when selectedNode changes (no simulation rebuild)
+  // Update stroke appearance when selectedNode or highlightNodes changes (no rebuild)
   useEffect(() => {
     if (!nodeSelRef.current) return;
     nodeSelRef.current.selectAll('circle')
-      .attr('stroke-width', d => d.id === selectedNode ? 4 : 2.5);
-  }, [selectedNode]);
+      .attr('stroke', d => {
+        if (highlightNodes && highlightNodes.has(d.id)) return '#ffffff';
+        return statusColor(d);
+      })
+      .attr('stroke-width', d => {
+        if (d.id === selectedNode) return 4.5;
+        if (highlightNodes && highlightNodes.has(d.id)) return 4;
+        return 2.5;
+      })
+      .attr('opacity', d => {
+        if (highlightNodes && highlightNodes.size > 0 && !highlightNodes.has(d.id)) {
+          return d.type === 'definition' ? 0.3 : 0.4;
+        }
+        return d.type === 'definition' ? 0.7 : 0.92;
+      });
+  }, [selectedNode, highlightNodes]);
 
   return (
     <svg

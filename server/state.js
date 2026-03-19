@@ -15,6 +15,18 @@ function createInitialState() {
     reviewed_disputes: new Set(), // "nodeId:disputerAgentId" pairs already processed
   }));
 
+  // Capture initial state (turn 0, before any agent turns)
+  const initialState = {
+    graph: Object.fromEntries(Object.entries(graph).map(([k, v]) => [k, { ...v }])),
+    agents: agents.map(a => ({
+      id: a.id,
+      accepted_set: [...a.accepted_set],
+      rejected_set: [],
+      published: [],
+      reviewed_disputes: [],
+    })),
+  };
+
   const log = [{
     turn: 0,
     agent: 'SYSTEM',
@@ -36,10 +48,27 @@ function createInitialState() {
       apiKey: process.env.LLM_API_KEY || '',
       model: process.env.LLM_MODEL || '',
     },
+    turnHistory: [],   // TurnRecord[]
+    snapshots: [],     // FullSnapshot[]
+    initialState,      // captured at startup
   };
 }
 
 export const state = createInitialState();
+
+export function captureSnapshot() {
+  state.snapshots.push({
+    after_turn: state.turn,
+    graph: JSON.parse(JSON.stringify(state.graph)),
+    agents: state.agents.map(a => ({
+      id: a.id,
+      accepted_set: [...a.accepted_set],
+      rejected_set: [...a.rejected_set],
+      published: [...a.published],
+      reviewed_disputes: [...a.reviewed_disputes],
+    })),
+  });
+}
 
 export function serializeState() {
   return {
