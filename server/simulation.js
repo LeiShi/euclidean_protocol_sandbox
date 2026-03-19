@@ -1,5 +1,12 @@
 import { state, captureSnapshot } from './state.js';
-import { validatePublication, validateVerification, computeStatus } from './protocol.js';
+import {
+  validatePublication,
+  validateConjecturePublication,
+  validateVerification,
+  computeStatus,
+  runPromotionCascade,
+  runCollapseCascade,
+} from './protocol.js';
 import {
   callLLMWithTrace,
   buildSystemPrompt,
@@ -21,14 +28,14 @@ function getAcceptedNodes(agent) {
   return result;
 }
 
-// BFS to find all nodes in acceptedSet that transitively cite nodeId
+// BFS for nodes in acceptedSet that transitively cite nodeId
 function findDependents(nodeId, graph, acceptedSet) {
   const dependents = new Set();
   const queue = [nodeId];
   while (queue.length > 0) {
     const current = queue.shift();
     for (const n of Object.values(graph)) {
-      if (n.cites.includes(current) && acceptedSet.has(n.id) && !dependents.has(n.id)) {
+      if (n.cites?.includes(current) && acceptedSet.has(n.id) && !dependents.has(n.id)) {
         dependents.add(n.id);
         queue.push(n.id);
       }
@@ -37,7 +44,6 @@ function findDependents(nodeId, graph, acceptedSet) {
   return dependents;
 }
 
-// Find own publications that have unreviewed disputes
 function findDisputedPublications(agent) {
   return [...agent.published].filter(nodeId => {
     const node = state.graph[nodeId];
@@ -47,13 +53,35 @@ function findDisputedPublications(agent) {
   });
 }
 
+/** Check if a just-accepted theorem triggers any conjecture cascades. */
+function checkCascades(node) {
+  const cascadeLog = [];
+  for (const cid of (node.resolves || [])) {
+    if (state.graph[cid]?.type === 'conjecture' && computeStatus(state.graph[cid], state.graph) === 'open') {
+      const promoted = runPromotionCascade(cid, node.id, state.graph);
+      const msg = `Conjecture [${cid}] proven by [${node.id}]${promoted.length > 0 ? ` → promoted: [${promoted.join(', ')}]` : ''}`;
+      addLog({ agent: 'SYSTEM', action: 'promotion', detail: msg });
+      cascadeLog.push({ type: 'promotion', conjectureId: cid, promoted });
+    }
+  }
+  for (const cid of (node.contradicts || [])) {
+    if (state.graph[cid]?.type === 'conjecture' && computeStatus(state.graph[cid], state.graph) === 'open') {
+      const collapsed = runCollapseCascade(cid, node.id, state.graph);
+      const msg = `Conjecture [${cid}] disproven by [${node.id}]${collapsed.length > 0 ? ` → collapsed: [${collapsed.join(', ')}]` : ''}`;
+      addLog({ agent: 'SYSTEM', action: 'collapse', detail: msg });
+      cascadeLog.push({ type: 'collapse', conjectureId: cid, collapsed });
+    }
+  }
+  return cascadeLog;
+}
+
 export async function doAgentTurn() {
   const agentIdx = state.turn % 3;
   const agent = state.agents[agentIdx];
   const acceptedNodes = getAcceptedNodes(agent);
   const turnNum = state.turn;
 
-  // Snapshot agent state BEFORE turn for delta computation
+  // Snapshot state BEFORE turn for delta computation
   const beforeAccepted = new Set(agent.accepted_set);
   const beforeRejected = new Set(agent.rejected_set);
   const beforePublished = new Set(agent.published);
@@ -75,7 +103,31 @@ export async function doAgentTurn() {
   let parseError = null;
 
   try {
-    // ── Phase 0: Belief Revision ─────────────────────────────────────────
+    // ── Phase 0a: Mechanical retraction of collapsed nodes ─────────────────
+    const mechanicallyRetracted = [];
+    for (const nodeId of [...agent.accepted_set]) {
+      const node = state.graph[nodeId];
+      if (node && node.status_override === 'collapsed') {
+        agent.accepted_set.delete(nodeId);
+        agent.rejected_set.add(nodeId);
+        mechanicallyRetracted.push(nodeId);
+        const deps = findDependents(nodeId, state.graph, agent.accepted_set);
+        for (const depId of deps) {
+          agent.accepted_set.delete(depId);
+          agent.rejected_set.add(depId);
+          mechanicallyRetracted.push(depId);
+        }
+      }
+    }
+    if (mechanicallyRetracted.length > 0) {
+      addLog({
+        agent: agent.id,
+        action: 'mechanical_retract',
+        detail: `Synced with collapsed graph nodes: [${mechanicallyRetracted.join(', ')}]`,
+      });
+    }
+
+    // ── Phase 0b: LLM-based belief revision for disputed publications ──────
     const disputedPubs = findDisputedPublications(agent);
     if (disputedPubs.length > 0) {
       phase = 'revision';
@@ -98,7 +150,6 @@ export async function doAgentTurn() {
       try { parsedResponse = parseJSON(result.raw); }
       catch (e) { parseError = e.message; throw e; }
 
-      // Mark all current disputes on this node as reviewed
       for (const d of allDisputes) {
         agent.reviewed_disputes.add(`${nodeId}:${d.agentId}`);
       }
@@ -124,7 +175,7 @@ export async function doAgentTurn() {
         addLog({ agent: agent.id, action, detail });
       }
 
-      return; // finally still runs
+      return;
     }
 
     // ── Phase 1: Verify ───────────────────────────────────────────────────
@@ -132,7 +183,8 @@ export async function doAgentTurn() {
       !agent.accepted_set.has(n.id) &&
       !agent.rejected_set.has(n.id) &&
       !agent.published.has(n.id) &&
-      n.type === 'theorem'
+      (n.type === 'theorem' || n.type === 'conjecture') &&
+      n.status_override !== 'collapsed'
     );
 
     const shouldVerify = unverified.length > 0 && (
@@ -141,6 +193,7 @@ export async function doAgentTurn() {
 
     if (shouldVerify && unverified.length > 0) {
       const verifiable = unverified.filter(n =>
+        n.type === 'conjecture' ||  // conjectures always verifiable
         n.cites.every(cid => agent.accepted_set.has(cid))
       );
 
@@ -152,7 +205,7 @@ export async function doAgentTurn() {
         addLog({
           agent: agent.id,
           action: 'verify_start',
-          detail: `Attempting to verify [${target.id}]: "${target.claim.slice(0, 60)}..."`,
+          detail: `Attempting to verify [${target.id}] (${target.type}): "${target.claim.slice(0, 60)}..."`,
         });
 
         const sysPrompt = buildSystemPrompt(agent);
@@ -169,6 +222,7 @@ export async function doAgentTurn() {
           verdict: parsedResponse.verdict,
           justification: parsedResponse.justification || parsedResponse.reasoning || '',
           reasoning: parsedResponse.reasoning || '',
+          implicit_assumptions_found: parsedResponse.implicit_assumptions_found || [],
         };
 
         const val = validateVerification(verification, state.graph);
@@ -184,15 +238,22 @@ export async function doAgentTurn() {
           verifications: [...(state.graph[target.id].verifications || []), verification],
         };
 
-        if (parsedResponse.verdict === 'approve') {
+        if (parsedResponse.verdict === 'approve' || parsedResponse.verdict === 'conditional_approve') {
           agent.accepted_set.add(target.id);
-          action = 'approve';
+          action = parsedResponse.verdict === 'conditional_approve' ? 'conditional_approve' : 'approve';
         } else {
           agent.rejected_set.add(target.id);
           action = 'dispute';
         }
-        detail = `${action === 'approve' ? 'Approved' : 'Disputed'} [${target.id}]: ${(parsedResponse.reasoning || parsedResponse.justification || '').slice(0, 120)}`;
+        detail = `${action === 'dispute' ? 'Disputed' : action === 'conditional_approve' ? 'Conditionally approved' : 'Approved'} [${target.id}]: ${(parsedResponse.reasoning || parsedResponse.justification || '').slice(0, 120)}`;
         addLog({ agent: agent.id, action, detail });
+
+        // Check if this theorem just became accepted → trigger cascades
+        const newStatus = computeStatus(state.graph[target.id], state.graph);
+        if (newStatus === 'accepted') {
+          checkCascades(state.graph[target.id]);
+        }
+
         return;
       }
     }
@@ -213,6 +274,47 @@ export async function doAgentTurn() {
     try { parsedResponse = parseJSON(result.raw); }
     catch (e) { parseError = e.message; throw e; }
 
+    // ── Branch: conjecture publication ────────────────────────────────────
+    if (parsedResponse.type === 'conjecture') {
+      if (!parsedResponse.conjecture_claim) {
+        action = 'error';
+        detail = 'Conjecture response missing conjecture_claim field';
+        addLog({ agent: agent.id, action, detail });
+        return;
+      }
+
+      const newId = `C${String(state.conjectureCounter++).padStart(3, '0')}`;
+      const newNode = {
+        id: newId,
+        type: 'conjecture',
+        author: agent.id,
+        claim: parsedResponse.conjecture_claim,
+        motivation: parsedResponse.motivation || '',
+        cites: parsedResponse.relevant_node_ids || [],
+        proof_steps: [],
+        verifications: [],
+      };
+
+      const val = validateConjecturePublication(newNode, state.graph);
+      if (!val.valid) {
+        action = 'protocol_reject';
+        detail = `Conjecture rejected: ${val.errors.join('; ')}`;
+        addLog({ agent: agent.id, action, detail });
+        return;
+      }
+
+      state.graph[newId] = newNode;
+      agent.accepted_set.add(newId);
+      agent.published.add(newId);
+      publishedNodeId = newId;
+
+      action = 'publish_conjecture';
+      detail = `Published conjecture [${newId}]: "${parsedResponse.conjecture_claim.slice(0, 100)}..."`;
+      addLog({ agent: agent.id, action, detail });
+      return;
+    }
+
+    // ── Branch: theorem publication ───────────────────────────────────────
     if (!parsedResponse.theorem_claim || !parsedResponse.proof_steps || !parsedResponse.all_cited_ids) {
       action = 'error';
       detail = 'LLM response missing required fields (theorem_claim, proof_steps, all_cited_ids)';
@@ -238,6 +340,8 @@ export async function doAgentTurn() {
       type: 'theorem',
       verifications: [],
       confidence: parsedResponse.confidence || 'medium',
+      ...(parsedResponse.resolves?.length > 0 && { resolves: parsedResponse.resolves }),
+      ...(parsedResponse.contradicts?.length > 0 && { contradicts: parsedResponse.contradicts }),
     };
 
     const val = validatePublication(newNode, state.graph, agent.accepted_set);
@@ -280,7 +384,6 @@ export async function doAgentTurn() {
       }
     }
 
-    // Compute agent state delta
     const agentChanges = { agent_id: agent.id };
     const addedToAccepted = [...agent.accepted_set].filter(id => !beforeAccepted.has(id));
     const removedFromAccepted = [...beforeAccepted].filter(id => !agent.accepted_set.has(id));
@@ -326,7 +429,6 @@ export async function doAgentTurn() {
 
     state.turn++;
 
-    // Capture snapshot every 10 turns
     if (state.turn > 0 && state.turn % 10 === 0) {
       captureSnapshot();
     }

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ForceGraph from './components/ForceGraph.jsx';
 import ReplayControls from './components/ReplayControls.jsx';
 import ReplayTurnDetail from './components/ReplayTurnDetail.jsx';
+import NodeListPanel from './components/NodeListPanel.jsx';
+import NodeResearchPage from './components/NodeResearchPage.jsx';
 import { deobfuscate, VOCAB } from './vocab.js';
 import { AGENT_DEFS, computeStatus, STATUS_BG, STATUS_TEXT, LOG_COLORS } from './constants.js';
 import { reconstructStateAtTurn, getChangedNodeIds, buildSaveFilename } from './utils/replay.js';
@@ -37,9 +39,9 @@ function statusBadge(status) {
   );
 }
 
-function NodeDetail({ node, onClose }) {
+function NodeDetail({ node, graph, onClose }) {
   if (!node) return null;
-  const status = computeStatus(node);
+  const status = computeStatus(node, graph);
   return (
     <div style={{ ...S.panel, fontSize: 11, border: 'none', borderRadius: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -67,9 +69,21 @@ function NodeDetail({ node, onClose }) {
             Author: <span style={{ color: AGENT_COLOR[node.author] || '#d4d4d8' }}>
               {AGENT_NAME[node.author] || node.author}
             </span>
-            {' | '}Confidence: {node.confidence || '—'}
-            {' | '}Cites: {node.cites?.join(', ') || '—'}
+            {node.type !== 'conjecture' && <>{' | '}Confidence: {node.confidence || '—'}</>}
+            {node.cites?.length > 0 && <>{' | '}Cites: {node.cites.join(', ')}</>}
+            {node.resolved_by && <>{' | '}Resolved by: <b>{node.resolved_by}</b></>}
           </div>
+          {node.type === 'conjecture' && node.motivation && (
+            <div style={{ color: '#a1a1aa', marginBottom: 6, fontSize: 10, fontStyle: 'italic' }}>
+              Motivation: {node.motivation}
+            </div>
+          )}
+          {node.resolves?.length > 0 && (
+            <div style={{ color: '#4ade80', fontSize: 10, marginBottom: 4 }}>Resolves: {node.resolves.join(', ')}</div>
+          )}
+          {node.contradicts?.length > 0 && (
+            <div style={{ color: '#f87171', fontSize: 10, marginBottom: 4 }}>Contradicts: {node.contradicts.join(', ')}</div>
+          )}
 
           {node.proof_steps?.length > 0 && (
             <div style={{ marginBottom: 8 }}>
@@ -184,6 +198,112 @@ function EventLog({ log }) {
   );
 }
 
+function GraphLegend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'absolute', bottom: 8, left: 8, zIndex: 10 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Show legend"
+        style={{
+          background: 'rgba(10,11,14,0.88)', border: '1px solid #3f3f46',
+          color: '#a1a1aa', borderRadius: 4, padding: '3px 10px',
+          fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        {open ? '✕ Legend' : '? Legend'}
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', bottom: 32, left: 0,
+          background: 'rgba(10,11,14,0.97)', border: '1px solid #3f3f46',
+          borderRadius: 6, padding: '12px 14px', fontSize: 10,
+          minWidth: 260, maxWidth: 320, color: '#a1a1aa', lineHeight: 1.9,
+        }}>
+          <Section title="Node shapes">
+            <Row symbol={<CircleSvg r={7} fill="#555" stroke="#9ca3af" />}>Axiom (definition / postulate / common notion)</Row>
+            <Row symbol={<CircleSvg r={8} fill="#3d85c6" stroke="#9ca3af" />}>Theorem (published by an agent)</Row>
+            <Row symbol={<DiamondSvg fill="#e07a5f" stroke="#e4e4e7" dashed />}>Conjecture (unproven named assumption)</Row>
+          </Section>
+
+          <Section title="Node fill color">
+            <Row symbol={<CircleSvg r={7} fill="#374151" stroke="#9ca3af" />}>Definition</Row>
+            <Row symbol={<CircleSvg r={7} fill="#4b5563" stroke="#9ca3af" />}>Postulate / Common notion</Row>
+            {AGENT_DEFS.map(a => (
+              <Row key={a.id} symbol={<CircleSvg r={8} fill={a.color} stroke="#9ca3af" />}>{a.name} ({a.id})</Row>
+            ))}
+          </Section>
+
+          <Section title="Border style (theorems &amp; conjectures)">
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#22c55e" />}>Accepted — fully proven</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" dashed />}>Conditional — transitively depends on an unproven conjecture</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" />}>Pending — awaiting approvals</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#ef4444" />}>Disputed — logical flaw found</Row>
+            <Row symbol={<CircleSvg r={8} fill="#1a1a1a" stroke="#4b5563" dim />}>Collapsed — conjecture was disproven</Row>
+            <Row symbol={<DiamondSvg fill="#27272a" stroke="#e4e4e7" dashed />}>Open conjecture</Row>
+            <Row symbol={<DiamondSvg fill="#27272a" stroke="#22c55e" />}>Proven conjecture</Row>
+            <Row symbol={<DiamondSvg fill="#27272a" stroke="#ef4444" />}>Disproven conjecture</Row>
+          </Section>
+
+          <Section title="Edge (arrow) types">
+            <Row symbol={<EdgeSvg color="#666" />}>Support — normal logical dependency</Row>
+            <Row symbol={<EdgeSvg color="#f59e0b" dashed />}>Conditional — cites an unproven conjecture or conditional theorem</Row>
+            <Row symbol={<EdgeSvg color="#22c55e" thick />}>Resolves — theorem proves a conjecture</Row>
+            <Row symbol={<EdgeSvg color="#ef4444" thick />}>Contradicts — theorem disproves a conjecture</Row>
+          </Section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ color: '#f4f4f5', fontWeight: 700, fontSize: 10, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Row({ symbol, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 22, flexShrink: 0 }}>{symbol}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function CircleSvg({ r, fill, stroke, dashed, dim }) {
+  return (
+    <svg width={22} height={22}>
+      <circle cx={11} cy={11} r={r} fill={fill} stroke={stroke} strokeWidth={2}
+        strokeDasharray={dashed ? '3,2' : undefined} opacity={dim ? 0.35 : 1} />
+    </svg>
+  );
+}
+
+function DiamondSvg({ fill, stroke, dashed }) {
+  return (
+    <svg width={22} height={22}>
+      <polygon points="11,2 20,11 11,20 2,11" fill={fill} stroke={stroke} strokeWidth={2}
+        strokeDasharray={dashed ? '3,2' : undefined} />
+    </svg>
+  );
+}
+
+function EdgeSvg({ color, dashed, thick }) {
+  return (
+    <svg width={22} height={14}>
+      <line x1={1} y1={7} x2={17} y2={7} stroke={color} strokeWidth={thick ? 2.5 : 1.5}
+        strokeDasharray={dashed ? '4,2' : undefined} />
+      <polygon points="17,4 22,7 17,10" fill={color} />
+    </svg>
+  );
+}
+
 function VocabPanel() {
   return (
     <div style={{
@@ -243,6 +363,18 @@ export default function App() {
   const [apiKey, setApiKey] = useState('');
   const [rounds, setRounds] = useState(3);
   const runningRef = useRef(false);
+
+  // Main panel tab
+  const [mainTab, setMainTab] = useState('graph'); // 'graph' | 'nodelist'
+
+  // Research page
+  const [showResearch, setShowResearch] = useState(false);
+  const [researchFocusId, setResearchFocusId] = useState(null);
+
+  const handleOpenResearch = useCallback((nodeId = null) => {
+    setResearchFocusId(nodeId);
+    setShowResearch(true);
+  }, []);
 
   // Save/Load/Replay state
   const [loadDialog, setLoadDialog] = useState(null); // { saveFile }
@@ -578,6 +710,9 @@ export default function App() {
           <button onClick={handleLoadClick} style={S.btn(true, '#18181b')} title="Load a saved run">
             📂 Load Run
           </button>
+          <button onClick={() => handleOpenResearch(null)} style={S.btn(true, '#18181b')} title="Open node research view">
+            🔬 Research
+          </button>
 
           <button
             onClick={() => setShowVocab(v => !v)}
@@ -590,8 +725,15 @@ export default function App() {
             <span>Seeds: <span style={{ color: '#71717a' }}>{stats.definitions}D+{stats.postulates}P</span></span>
             <span>Theorems: <b style={{ color: '#f4f4f5' }}>{stats.theorems}</b></span>
             <span style={{ color: '#22c55e' }}>✓ {stats.accepted}</span>
+            <span style={{ color: '#fb923c' }}>◌ {stats.conditional ?? 0}</span>
             <span style={{ color: '#f59e0b' }}>⏳ {stats.pending}</span>
             <span style={{ color: '#ef4444' }}>✗ {stats.disputed}</span>
+            {stats.conjectures > 0 && (
+              <span style={{ color: '#a855f7' }}>◇ {stats.conjectures_open}/{stats.conjectures} conj.</span>
+            )}
+            {stats.collapsed > 0 && (
+              <span style={{ color: '#6b7280' }}>⊘ {stats.collapsed} collapsed</span>
+            )}
           </div>
         </div>
       )}
@@ -600,43 +742,53 @@ export default function App() {
 
       {/* MAIN CONTENT */}
       <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
-        {/* LEFT: GRAPH */}
+        {/* LEFT: GRAPH / NODE LIST */}
         <div style={{ flex: 2, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #27272a', flexShrink: 0 }}>
+            {[
+              { key: 'graph', label: 'Graph' },
+              { key: 'nodelist', label: `Nodes (${Object.values(displayGraph).filter(n => n.type === 'theorem').length})` },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setMainTab(tab.key)}
+                style={{
+                  background: 'none', border: 'none',
+                  borderBottom: mainTab === tab.key ? '2px solid #3b82f6' : '2px solid transparent',
+                  color: mainTab === tab.key ? '#f4f4f5' : '#71717a',
+                  cursor: 'pointer', padding: '6px 16px',
+                  fontSize: 12, fontFamily: 'inherit', marginBottom: -1,
+                }}
+              >{tab.label}</button>
+            ))}
+          </div>
+
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            <ForceGraph
-              graph={displayGraph}
-              selectedNode={selectedNode}
-              onSelectNode={setSelectedNode}
-              highlightNodes={highlightNodes}
-            />
-            {/* Legend */}
-            <div style={{
-              position: 'absolute', bottom: 8, left: 8,
-              background: 'rgba(10,11,14,0.85)', padding: '6px 10px',
-              borderRadius: 4, fontSize: 10, display: 'flex', gap: 10, flexWrap: 'wrap',
-              pointerEvents: 'none',
-            }}>
-              <span><Dot color="#374151" opacity={0.7} />Def</span>
-              <span><Dot color="#4b5563" />Post/CN</span>
-              {AGENT_DEFS.map(a => (
-                <span key={a.id}><Dot color={a.color} />{a.name}</span>
-              ))}
-              <span style={{ marginLeft: 4 }}>Border:</span>
-              <span style={{ color: '#22c55e' }}>Accepted</span>
-              <span style={{ color: '#f59e0b' }}>Pending</span>
-              <span style={{ color: '#ef4444' }}>Disputed</span>
-            </div>
-            {/* NodeDetail overlay */}
-            {selectedNodeData && (
-              <div style={{
-                position: 'absolute', bottom: 0, left: 0, right: 0,
-                maxHeight: '45%', overflowY: 'auto',
-                background: 'rgba(24,24,27,0.97)',
-                borderTop: '1px solid #3f3f46',
-                borderRadius: '0 0 8px 8px',
-              }}>
-                <NodeDetail node={selectedNodeData} onClose={() => setSelectedNode(null)} />
-              </div>
+            {mainTab === 'graph' ? (
+              <>
+                <ForceGraph
+                  graph={displayGraph}
+                  selectedNode={selectedNode}
+                  onSelectNode={setSelectedNode}
+                  highlightNodes={highlightNodes}
+                />
+                <GraphLegend />
+                {/* NodeDetail overlay */}
+                {selectedNodeData && (
+                  <div style={{
+                    position: 'absolute', bottom: 0, left: 0, right: 0,
+                    maxHeight: '45%', overflowY: 'auto',
+                    background: 'rgba(24,24,27,0.97)',
+                    borderTop: '1px solid #3f3f46',
+                    borderRadius: '0 0 8px 8px',
+                  }}>
+                    <NodeDetail node={selectedNodeData} graph={displayGraph} onClose={() => setSelectedNode(null)} />
+                  </div>
+                )}
+              </>
+            ) : (
+              <NodeListPanel graph={displayGraph} onOpenResearch={handleOpenResearch} />
             )}
           </div>
         </div>
@@ -660,16 +812,16 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Research page overlay */}
+      {showResearch && (
+        <NodeResearchPage
+          graph={displayGraph}
+          focusId={researchFocusId}
+          onClose={() => setShowResearch(false)}
+        />
+      )}
     </div>
   );
 }
 
-function Dot({ color, opacity = 1 }) {
-  return (
-    <span style={{
-      display: 'inline-block', width: 8, height: 8,
-      borderRadius: '50%', background: color, marginRight: 3, opacity,
-      verticalAlign: 'middle',
-    }} />
-  );
-}

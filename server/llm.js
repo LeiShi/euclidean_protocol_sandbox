@@ -1,4 +1,4 @@
-import { computeStatus } from './protocol.js';
+import { computeStatus, computeEdgeType } from './protocol.js';
 
 export const DEFAULT_MODELS = {
   gemini: 'gemini-3-flash-preview',
@@ -126,7 +126,7 @@ CRITICAL RULES:
 You must respond ONLY in valid JSON with no markdown formatting, no backticks, no preamble. Just raw JSON.`;
 }
 
-export function buildDerivationPrompt(agent, acceptedNodes, allNodes) {
+export function buildDerivationPrompt(agent, acceptedNodes, allNodes, allConjectures = {}) {
   const byType = (type) =>
     Object.values(acceptedNodes)
       .filter(n => n.type === type)
@@ -140,7 +140,13 @@ export function buildDerivationPrompt(agent, acceptedNodes, allNodes) {
 
   const acceptedTheorems = Object.values(acceptedNodes)
     .filter(n => n.type === 'theorem')
-    .map(n => `[${n.id}]: ${n.claim}`)
+    .map(n => `[${n.id}] (${computeStatus(n, allNodes)}): ${n.claim}`)
+    .join('\n');
+
+  // Open conjectures visible to this agent (in their accepted_set or public)
+  const openConjectures = Object.values(allNodes)
+    .filter(n => n.type === 'conjecture' && computeStatus(n, allNodes) === 'open')
+    .map(n => `[${n.id}] (open, by ${n.author}): ${n.claim}${n.motivation ? ` — motivation: ${n.motivation}` : ''}`)
     .join('\n');
 
   // Patch 1: unverified (exclude rejected nodes — they appear in rejected section)
@@ -152,7 +158,7 @@ export function buildDerivationPrompt(agent, acceptedNodes, allNodes) {
   // Patch 1: all public theorems for dedup awareness
   const allPublicTheorems = Object.values(allNodes)
     .filter(n => n.type === 'theorem')
-    .map(n => `[${n.id}] (by ${n.author}, status: ${computeStatus(n)}): ${n.claim}`)
+    .map(n => `[${n.id}] (by ${n.author}, status: ${computeStatus(n, allNodes)}): ${n.claim}`)
     .join('\n');
 
   // Patch 1: own publications — full and compact variants
@@ -180,24 +186,46 @@ export function buildDerivationPrompt(agent, acceptedNodes, allNodes) {
     .join('\n');
 
   const jsonFooter = `
-Respond with ONLY this JSON (no markdown, no backticks):
+Respond with ONLY one of these two JSON formats (no markdown, no backticks):
+
+To publish a THEOREM:
 {
+  "type": "theorem",
   "theorem_claim": "A clear statement of your new result using only system vocabulary",
   "proof_steps": [
     {"step": 1, "claim": "First step of reasoning", "justification": "Description of why this follows", "cites": ["P1", "D03"]},
     {"step": 2, "claim": "Second step", "justification": "Why this follows from step 1 and cited result", "cites": ["CN1", "P3"]}
   ],
   "all_cited_ids": ["P1", "P3", "CN1", "D03"],
+  "resolves": [],
+  "contradicts": [],
   "confidence": "high/medium/low"
+}
+
+To publish a CONJECTURE (if you need to name an unproven assumption):
+{
+  "type": "conjecture",
+  "conjecture_claim": "The unproven assumption you are naming",
+  "motivation": "Why you believe this might be true based on the axioms",
+  "relevant_node_ids": ["P3", "D15"]
 }`;
 
-  const taskInstruction = `Your task: Derive a NEW result that follows logically from your accepted knowledge base.
+  const taskInstruction = `Your task: Derive a NEW result that follows logically from your accepted knowledge base, OR name an important unproven assumption as a conjecture.
 
 CRITICAL CONSTRAINTS:
 - Your result must be GENUINELY NEW — not a restatement, rephrasing, or minor variation of any theorem listed above (whether accepted, pending, disputed, or rejected).
 - Do NOT re-derive anything you previously rejected — the flaw you identified still applies.
 - Do NOT re-derive anything already in the public graph, even if it was published by another agent.
-- Think about what interesting consequences follow from combining definitions, postulates, common notions, and any existing theorems in ways that have NOT been explored yet.`;
+- Think about what interesting consequences follow from combining definitions, postulates, common notions, and any existing theorems in ways that have NOT been explored yet.
+
+CONJECTURE RULES:
+- You MAY cite open conjectures as premises. If you do, your theorem will be marked CONDITIONAL.
+- If your proof requires an unproven assumption not in any existing node, you MUST either:
+  1. Publish a separate CONJECTURE node first, then cite it in your theorem.
+  2. Find a proof that avoids the assumption.
+  3. Derive the assumption from existing results.
+- Do NOT smuggle hidden assumptions into a proof without declaring them.
+- If you publish a theorem that PROVES or DISPROVES an open conjecture, set the "resolves" or "contradicts" field accordingly.`;
 
   const buildPrompt = (defs, ownPubs) => {
     const sections = [
@@ -206,8 +234,11 @@ CRITICAL CONSTRAINTS:
       `\n=== POSTULATES (constructive axioms) ===\n${posts}`,
       `\n=== COMMON NOTIONS (rules of equality and comparison) ===\n${cns}`,
       acceptedTheorems
-        ? `\n=== ACCEPTED THEOREMS (previously derived and verified) ===\n${acceptedTheorems}`
+        ? `\n=== ACCEPTED/CONDITIONAL THEOREMS (previously derived and verified) ===\n${acceptedTheorems}`
         : `\n=== No theorems derived yet ===`,
+      openConjectures
+        ? `\n=== OPEN CONJECTURES (unproven — citing these makes your theorem CONDITIONAL) ===\n${openConjectures}`
+        : '',
       pending ? `\nNodes in the public graph you have NOT yet verified:\n${pending}` : '',
       allPublicTheorems
         ? `\n=== ALL THEOREMS IN THE PUBLIC GRAPH (for your awareness — do NOT re-derive any of these) ===\n${allPublicTheorems}`
@@ -325,11 +356,15 @@ Check:
 3. Does the final claim follow from the proof steps?
 4. Are there any gaps, circular reasoning, or unjustified leaps?
 5. Are defined terms used consistently with their definitions?
+6. Does any proof step introduce a claim NOT justified by a cited predecessor and NOT self-evident from definitions?
+   - If yes and it is cited as a conjecture node: use "conditional_approve" — the logic is valid but rests on unproven ground.
+   - If yes and it is NOT cited as a conjecture (hidden assumption): DISPUTE the proof. Hidden assumptions are a protocol violation.
 
 Respond with ONLY this JSON (no markdown, no backticks):
 {
-  "verdict": "approve" or "dispute",
+  "verdict": "approve" or "conditional_approve" or "dispute",
   "reasoning": "Your step-by-step analysis of the proof",
+  "implicit_assumptions_found": [],
   "problem_step": null or step_number_where_error_is,
   "justification": "If disputing, explain the specific flaw"
 }`;

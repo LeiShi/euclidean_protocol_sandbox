@@ -160,10 +160,10 @@ export function restoreFromSaveFile(data) {
   }
 
   state.turn = totalTurns;
-  const tNums = Object.keys(state.graph)
-    .filter(id => /^T\d+$/.test(id))
-    .map(id => parseInt(id.slice(1)));
+  const tNums = Object.keys(state.graph).filter(id => /^T\d+$/.test(id)).map(id => parseInt(id.slice(1)));
   state.nodeCounter = tNums.length > 0 ? Math.max(...tNums) + 1 : 1;
+  const cNums = Object.keys(state.graph).filter(id => /^C\d+$/.test(id)).map(id => parseInt(id.slice(1)));
+  state.conjectureCounter = cNums.length > 0 ? Math.max(...cNums) + 1 : 1;
 
   state.turnHistory = [...turns];
   state.snapshots = [...snapshotData];
