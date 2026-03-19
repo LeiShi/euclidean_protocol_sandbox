@@ -2,13 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Branches
+## Branching Workflow
 
-- `main` — stable, tested releases only
-- `dev` — this Claude Code instance's development branch
-- `dev1` — parallel development branch (separate Claude Code instance)
+This project follows a three-tier Git flow:
 
-Never push directly to `main`. Commit to `dev`, then merge when tested.
+- **`main`** — stable releases only. Never commit here directly. Only merged from `dev` when the user decides to publish a new version.
+- **`dev`** — integration branch. Always contains the latest set of completed, tested features. The base for all new feature branches.
+- **`feature/<name>`** — one branch per feature, cut from `dev`. All development happens here.
+
+### Cycle
+
+```
+dev → feature/<name> → (implement & test) → rebase onto dev → merge to dev → repeat
+                                                                     ↓ (when ready)
+                                                                    main
+```
+
+### Rules
+
+1. **Always cut feature branches from `dev`**, not from `main`.
+2. **Never commit directly to `dev` or `main`** — all work goes through a feature branch.
+3. **Rebase before merging**: before merging a feature branch into `dev`, rebase it onto the latest `dev` to keep a linear history.
+4. **PR per feature**: open a pull request from `feature/<name>` → `dev`. Review and confirm tests pass before merging.
+5. **Release**: when enough features have accumulated on `dev`, merge `dev` → `main` as a new version. This requires explicit user approval.
+6. **Multiple Claude instances** can work on separate feature branches simultaneously without conflict.
 
 ## Commands
 
