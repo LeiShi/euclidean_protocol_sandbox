@@ -235,7 +235,7 @@ function GraphLegend() {
 
           <Section title="Border style (theorems &amp; conjectures)">
             <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#22c55e" />}>Accepted — fully proven</Row>
-            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" dashed />}>Conditional — depends on an open conjecture</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" dashed />}>Conditional — transitively depends on an unproven conjecture</Row>
             <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" />}>Pending — awaiting approvals</Row>
             <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#ef4444" />}>Disputed — logical flaw found</Row>
             <Row symbol={<CircleSvg r={8} fill="#1a1a1a" stroke="#4b5563" dim />}>Collapsed — conjecture was disproven</Row>
@@ -246,7 +246,7 @@ function GraphLegend() {
 
           <Section title="Edge (arrow) types">
             <Row symbol={<EdgeSvg color="#666" />}>Support — normal logical dependency</Row>
-            <Row symbol={<EdgeSvg color="#f59e0b" dashed />}>Conditional — cites an open conjecture</Row>
+            <Row symbol={<EdgeSvg color="#f59e0b" dashed />}>Conditional — cites an unproven conjecture or conditional theorem</Row>
             <Row symbol={<EdgeSvg color="#22c55e" thick />}>Resolves — theorem proves a conjecture</Row>
             <Row symbol={<EdgeSvg color="#ef4444" thick />}>Contradicts — theorem disproves a conjecture</Row>
           </Section>
