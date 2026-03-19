@@ -105,6 +105,17 @@ app.post('/api/config', (req, res) => {
   });
 });
 
+// POST /api/agent/:id — update per-agent parameters (e.g. derive_probability)
+app.post('/api/agent/:id', (req, res) => {
+  const agent = state.agents.find(a => a.id === req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const { derive_probability } = req.body;
+  if (derive_probability !== undefined) {
+    agent.derive_probability = Math.max(0, Math.min(1, Number(derive_probability)));
+  }
+  res.json({ ok: true, id: agent.id, derive_probability: agent.derive_probability });
+});
+
 // GET /api/log — event log with pagination
 app.get('/api/log', (req, res) => {
   const page = parseInt(req.query.page) || 1;

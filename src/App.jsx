@@ -131,8 +131,9 @@ function NodeDetail({ node, graph, onClose }) {
   );
 }
 
-function AgentPanel({ agent, isActive, isRunning }) {
+function AgentPanel({ agent, isActive, isRunning, onUpdateAgent }) {
   const [expanded, setExpanded] = useState(false);
+  const prob = agent.derive_probability ?? 0.5;
   return (
     <div
       onClick={() => setExpanded(e => !e)}
@@ -155,7 +156,22 @@ function AgentPanel({ agent, isActive, isRunning }) {
       </div>
       {expanded && (
         <div style={{ marginTop: 8, fontSize: 10, color: '#71717a', borderTop: '1px solid #27272a', paddingTop: 6 }}>
-          <div style={{ marginBottom: 4, color: '#a1a1aa', fontStyle: 'italic' }}>{agent.personality}</div>
+          <div style={{ marginBottom: 6, color: '#a1a1aa', fontStyle: 'italic' }}>{agent.personality}</div>
+
+          {/* Derive vs Verify probability slider */}
+          {onUpdateAgent && (
+            <div style={{ marginBottom: 6 }} onClick={e => e.stopPropagation()}>
+              <div style={{ color: '#a1a1aa', marginBottom: 3 }}>
+                Derive vs Verify: <span style={{ color: '#f4f4f5' }}>{Math.round(prob * 100)}% derive</span>
+              </div>
+              <input
+                type="range" min={0} max={100} value={Math.round(prob * 100)}
+                onChange={e => onUpdateAgent(agent.id, { derive_probability: Number(e.target.value) / 100 })}
+                style={{ width: '100%', accentColor: agent.color }}
+              />
+            </div>
+          )}
+
           <div>
             <span style={{ color: '#22c55e' }}>Accepted IDs: </span>
             {agent.accepted_set.filter(id => id.startsWith('T')).join(', ') || '—'}
@@ -472,6 +488,18 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: newProvider, model: newModel, apiKey: newKey }),
     }).catch(() => {});
+  }, []);
+
+  // ── Agent parameter updates ──────────────────────────────────────────────
+
+  const handleUpdateAgent = useCallback(async (agentId, updates) => {
+    await fetch(`/api/agent/${agentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    // Optimistically update local state
+    setAgents(prev => prev.map(a => a.id === agentId ? { ...a, ...updates } : a));
   }, []);
 
   // ── Save / Load / Replay ────────────────────────────────────────────────
@@ -801,6 +829,7 @@ export default function App() {
               agent={agent}
               isActive={!replayFile && agent.id === activeAgentId}
               isRunning={loading}
+              onUpdateAgent={replayFile ? null : handleUpdateAgent}
             />
           ))}
           {replayFile ? (

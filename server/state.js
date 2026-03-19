@@ -79,6 +79,7 @@ export function serializeState() {
       name: a.name,
       color: a.color,
       personality: a.personality,
+      derive_probability: a.derive_probability ?? 0.5,
       accepted_set: [...a.accepted_set],
       rejected_set: [...a.rejected_set],
       published: [...a.published],

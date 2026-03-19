@@ -4,18 +4,21 @@ export const AGENT_DEFS = [
     name: 'Archon',
     color: '#e07a5f',
     personality: 'methodical and careful, prefers building on well-established foundations, verifies thoroughly before extending',
+    derive_probability: 0.7,
   },
   {
     id: 'A2',
     name: 'Bion',
     color: '#3d85c6',
     personality: 'creative and adventurous, looks for surprising combinations of existing results, willing to attempt ambitious derivations',
+    derive_probability: 0.5,
   },
   {
     id: 'A3',
     name: 'Callias',
     color: '#81b29a',
     personality: 'skeptical and rigorous, prioritizes verification over derivation, looks for flaws in others\' proofs',
+    derive_probability: 0.3,
   },
 ];
 

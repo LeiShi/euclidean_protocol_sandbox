@@ -1,7 +1,7 @@
 export const AGENT_DEFS = [
-  { id: 'A1', name: 'Archon', color: '#e07a5f' },
-  { id: 'A2', name: 'Bion', color: '#3d85c6' },
-  { id: 'A3', name: 'Callias', color: '#81b29a' },
+  { id: 'A1', name: 'Archon', color: '#e07a5f', derive_probability: 0.7 },
+  { id: 'A2', name: 'Bion', color: '#3d85c6', derive_probability: 0.5 },
+  { id: 'A3', name: 'Callias', color: '#81b29a', derive_probability: 0.3 },
 ];
 
 export const SEED_TYPES = new Set(['definition', 'postulate', 'common_notion']);

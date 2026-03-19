@@ -178,7 +178,7 @@ export async function doAgentTurn() {
       return;
     }
 
-    // ── Phase 1: Verify ───────────────────────────────────────────────────
+    // ── Phase 1/2 decision: probability-based derive vs verify ───────────
     const unverified = Object.values(state.graph).filter(n =>
       !agent.accepted_set.has(n.id) &&
       !agent.rejected_set.has(n.id) &&
@@ -187,18 +187,17 @@ export async function doAgentTurn() {
       n.status_override !== 'collapsed'
     );
 
-    const shouldVerify = unverified.length > 0 && (
-      agent.personality.includes('skeptical') || Math.random() < 0.5
+    const verifiable = unverified.filter(n =>
+      n.type === 'conjecture' ||
+      n.cites.every(cid => agent.accepted_set.has(cid))
     );
 
-    if (shouldVerify && unverified.length > 0) {
-      const verifiable = unverified.filter(n =>
-        n.type === 'conjecture' ||  // conjectures always verifiable
-        n.cites.every(cid => agent.accepted_set.has(cid))
-      );
+    const hasVerifiable = verifiable.length > 0;
+    const shouldDerive = Math.random() < (agent.derive_probability ?? 0.5);
 
-      if (verifiable.length > 0) {
-        phase = 'verify';
+    // ── Phase 1: Verify ───────────────────────────────────────────────────
+    if (hasVerifiable && !shouldDerive) {
+      phase = 'verify';
         const target = verifiable[Math.floor(Math.random() * verifiable.length)];
         targetNodeId = target.id;
 
@@ -255,7 +254,6 @@ export async function doAgentTurn() {
         }
 
         return;
-      }
     }
 
     // ── Phase 2: Derive ───────────────────────────────────────────────────
