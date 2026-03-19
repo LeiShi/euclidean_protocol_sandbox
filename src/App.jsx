@@ -37,9 +37,9 @@ function statusBadge(status) {
   );
 }
 
-function NodeDetail({ node, onClose }) {
+function NodeDetail({ node, graph, onClose }) {
   if (!node) return null;
-  const status = computeStatus(node);
+  const status = computeStatus(node, graph);
   return (
     <div style={{ ...S.panel, fontSize: 11, border: 'none', borderRadius: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -67,9 +67,21 @@ function NodeDetail({ node, onClose }) {
             Author: <span style={{ color: AGENT_COLOR[node.author] || '#d4d4d8' }}>
               {AGENT_NAME[node.author] || node.author}
             </span>
-            {' | '}Confidence: {node.confidence || '—'}
-            {' | '}Cites: {node.cites?.join(', ') || '—'}
+            {node.type !== 'conjecture' && <>{' | '}Confidence: {node.confidence || '—'}</>}
+            {node.cites?.length > 0 && <>{' | '}Cites: {node.cites.join(', ')}</>}
+            {node.resolved_by && <>{' | '}Resolved by: <b>{node.resolved_by}</b></>}
           </div>
+          {node.type === 'conjecture' && node.motivation && (
+            <div style={{ color: '#a1a1aa', marginBottom: 6, fontSize: 10, fontStyle: 'italic' }}>
+              Motivation: {node.motivation}
+            </div>
+          )}
+          {node.resolves?.length > 0 && (
+            <div style={{ color: '#4ade80', fontSize: 10, marginBottom: 4 }}>Resolves: {node.resolves.join(', ')}</div>
+          )}
+          {node.contradicts?.length > 0 && (
+            <div style={{ color: '#f87171', fontSize: 10, marginBottom: 4 }}>Contradicts: {node.contradicts.join(', ')}</div>
+          )}
 
           {node.proof_steps?.length > 0 && (
             <div style={{ marginBottom: 8 }}>
@@ -590,8 +602,15 @@ export default function App() {
             <span>Seeds: <span style={{ color: '#71717a' }}>{stats.definitions}D+{stats.postulates}P</span></span>
             <span>Theorems: <b style={{ color: '#f4f4f5' }}>{stats.theorems}</b></span>
             <span style={{ color: '#22c55e' }}>✓ {stats.accepted}</span>
+            <span style={{ color: '#fb923c' }}>◌ {stats.conditional ?? 0}</span>
             <span style={{ color: '#f59e0b' }}>⏳ {stats.pending}</span>
             <span style={{ color: '#ef4444' }}>✗ {stats.disputed}</span>
+            {stats.conjectures > 0 && (
+              <span style={{ color: '#a855f7' }}>◇ {stats.conjectures_open}/{stats.conjectures} conj.</span>
+            )}
+            {stats.collapsed > 0 && (
+              <span style={{ color: '#6b7280' }}>⊘ {stats.collapsed} collapsed</span>
+            )}
           </div>
         </div>
       )}
@@ -635,7 +654,7 @@ export default function App() {
                 borderTop: '1px solid #3f3f46',
                 borderRadius: '0 0 8px 8px',
               }}>
-                <NodeDetail node={selectedNodeData} onClose={() => setSelectedNode(null)} />
+                <NodeDetail node={selectedNodeData} graph={displayGraph} onClose={() => setSelectedNode(null)} />
               </div>
             )}
           </div>

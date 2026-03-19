@@ -41,6 +41,7 @@ function createInitialState() {
     log,
     turn: 0,
     nodeCounter: 1,
+    conjectureCounter: 1,
     running: false,
     abortFlag: false,
     config: {
