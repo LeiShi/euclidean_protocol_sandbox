@@ -196,6 +196,112 @@ function EventLog({ log }) {
   );
 }
 
+function GraphLegend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'absolute', bottom: 8, left: 8, zIndex: 10 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Show legend"
+        style={{
+          background: 'rgba(10,11,14,0.88)', border: '1px solid #3f3f46',
+          color: '#a1a1aa', borderRadius: 4, padding: '3px 10px',
+          fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        {open ? '✕ Legend' : '? Legend'}
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', bottom: 32, left: 0,
+          background: 'rgba(10,11,14,0.97)', border: '1px solid #3f3f46',
+          borderRadius: 6, padding: '12px 14px', fontSize: 10,
+          minWidth: 260, maxWidth: 320, color: '#a1a1aa', lineHeight: 1.9,
+        }}>
+          <Section title="Node shapes">
+            <Row symbol={<CircleSvg r={7} fill="#555" stroke="#9ca3af" />}>Axiom (definition / postulate / common notion)</Row>
+            <Row symbol={<CircleSvg r={8} fill="#3d85c6" stroke="#9ca3af" />}>Theorem (published by an agent)</Row>
+            <Row symbol={<DiamondSvg fill="#e07a5f" stroke="#e4e4e7" dashed />}>Conjecture (unproven named assumption)</Row>
+          </Section>
+
+          <Section title="Node fill color">
+            <Row symbol={<CircleSvg r={7} fill="#374151" stroke="#9ca3af" />}>Definition</Row>
+            <Row symbol={<CircleSvg r={7} fill="#4b5563" stroke="#9ca3af" />}>Postulate / Common notion</Row>
+            {AGENT_DEFS.map(a => (
+              <Row key={a.id} symbol={<CircleSvg r={8} fill={a.color} stroke="#9ca3af" />}>{a.name} ({a.id})</Row>
+            ))}
+          </Section>
+
+          <Section title="Border style (theorems &amp; conjectures)">
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#22c55e" />}>Accepted — fully proven</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" dashed />}>Conditional — depends on an open conjecture</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#f59e0b" />}>Pending — awaiting approvals</Row>
+            <Row symbol={<CircleSvg r={8} fill="#27272a" stroke="#ef4444" />}>Disputed — logical flaw found</Row>
+            <Row symbol={<CircleSvg r={8} fill="#1a1a1a" stroke="#4b5563" dim />}>Collapsed — conjecture was disproven</Row>
+            <Row symbol={<DiamondSvg fill="#27272a" stroke="#e4e4e7" dashed />}>Open conjecture</Row>
+            <Row symbol={<DiamondSvg fill="#27272a" stroke="#22c55e" />}>Proven conjecture</Row>
+            <Row symbol={<DiamondSvg fill="#27272a" stroke="#ef4444" />}>Disproven conjecture</Row>
+          </Section>
+
+          <Section title="Edge (arrow) types">
+            <Row symbol={<EdgeSvg color="#666" />}>Support — normal logical dependency</Row>
+            <Row symbol={<EdgeSvg color="#f59e0b" dashed />}>Conditional — cites an open conjecture</Row>
+            <Row symbol={<EdgeSvg color="#22c55e" thick />}>Resolves — theorem proves a conjecture</Row>
+            <Row symbol={<EdgeSvg color="#ef4444" thick />}>Contradicts — theorem disproves a conjecture</Row>
+          </Section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ color: '#f4f4f5', fontWeight: 700, fontSize: 10, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Row({ symbol, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 22, flexShrink: 0 }}>{symbol}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function CircleSvg({ r, fill, stroke, dashed, dim }) {
+  return (
+    <svg width={22} height={22}>
+      <circle cx={11} cy={11} r={r} fill={fill} stroke={stroke} strokeWidth={2}
+        strokeDasharray={dashed ? '3,2' : undefined} opacity={dim ? 0.35 : 1} />
+    </svg>
+  );
+}
+
+function DiamondSvg({ fill, stroke, dashed }) {
+  return (
+    <svg width={22} height={22}>
+      <polygon points="11,2 20,11 11,20 2,11" fill={fill} stroke={stroke} strokeWidth={2}
+        strokeDasharray={dashed ? '3,2' : undefined} />
+    </svg>
+  );
+}
+
+function EdgeSvg({ color, dashed, thick }) {
+  return (
+    <svg width={22} height={14}>
+      <line x1={1} y1={7} x2={17} y2={7} stroke={color} strokeWidth={thick ? 2.5 : 1.5}
+        strokeDasharray={dashed ? '4,2' : undefined} />
+      <polygon points="17,4 22,7 17,10" fill={color} />
+    </svg>
+  );
+}
+
 function VocabPanel() {
   return (
     <div style={{
@@ -628,23 +734,7 @@ export default function App() {
               onSelectNode={setSelectedNode}
               highlightNodes={highlightNodes}
             />
-            {/* Legend */}
-            <div style={{
-              position: 'absolute', bottom: 8, left: 8,
-              background: 'rgba(10,11,14,0.85)', padding: '6px 10px',
-              borderRadius: 4, fontSize: 10, display: 'flex', gap: 10, flexWrap: 'wrap',
-              pointerEvents: 'none',
-            }}>
-              <span><Dot color="#374151" opacity={0.7} />Def</span>
-              <span><Dot color="#4b5563" />Post/CN</span>
-              {AGENT_DEFS.map(a => (
-                <span key={a.id}><Dot color={a.color} />{a.name}</span>
-              ))}
-              <span style={{ marginLeft: 4 }}>Border:</span>
-              <span style={{ color: '#22c55e' }}>Accepted</span>
-              <span style={{ color: '#f59e0b' }}>Pending</span>
-              <span style={{ color: '#ef4444' }}>Disputed</span>
-            </div>
+            <GraphLegend />
             {/* NodeDetail overlay */}
             {selectedNodeData && (
               <div style={{
